@@ -125,7 +125,6 @@ def save_location(
         )
 
         db.add(movement)
-
         db.commit()
 
 
@@ -142,14 +141,11 @@ def movement_report(
 
         stmt = select(Movement).where(
             and_(
-                Movement.created_at
-                >= datetime.combine(
+                Movement.created_at >= datetime.combine(
                     start_date,
                     datetime.min.time()
                 ),
-
-                Movement.created_at
-                <= datetime.combine(
+                Movement.created_at <= datetime.combine(
                     end_date,
                     datetime.max.time()
                 ),
@@ -186,21 +182,15 @@ def movement_report(
                 "Tarih/Saat": r.created_at,
                 "Lokasyon": r.location_code,
                 "Hareket Tipi": r.movement_type,
-
                 "Eski Durum": r.old_status,
                 "Yeni Durum": r.new_status,
-
                 "Eski Ürün": r.old_product,
                 "Yeni Ürün": r.new_product,
-
                 "Eski Lot": r.old_lot,
                 "Yeni Lot": r.new_lot,
-
                 "Eski Miktar (kg)": r.old_quantity_kg,
                 "Yeni Miktar (kg)": r.new_quantity_kg,
-
                 "Fark (kg)": r.quantity_delta_kg,
-
                 "Not": r.note,
                 "Değiştiren": r.changed_by,
             }
@@ -209,36 +199,25 @@ def movement_report(
     )
 
 
-# ------------------------------------------------------
-# ARAYÜZ
-# ------------------------------------------------------
-
 st.title("🏭 Canlı Depo Haritası")
 
 locations = get_locations()
 
 filled = sum(
-    1
-    for x in locations
+    1 for x in locations
     if x.status != "Boş"
 )
 
 blocked = sum(
-    1
-    for x in locations
+    1 for x in locations
     if x.status == "Bloke"
 )
 
 reserved = sum(
-    1
-    for x in locations
+    1 for x in locations
     if x.status == "Rezerve"
 )
 
-
-# ------------------------------------------------------
-# KPI
-# ------------------------------------------------------
 
 c1, c2, c3, c4 = st.columns(4)
 
@@ -258,15 +237,8 @@ c3.metric(
 )
 
 if len(locations) > 0:
-
-    doluluk = (
-        filled
-        / len(locations)
-        * 100
-    )
-
+    doluluk = filled / len(locations) * 100
 else:
-
     doluluk = 0
 
 c4.metric(
@@ -275,8 +247,7 @@ c4.metric(
 )
 
 st.caption(
-    f"🔴 Bloke: {blocked} "
-    f"• 🟣 Rezerve: {reserved}"
+    f"🔴 Bloke: {blocked} • 🟣 Rezerve: {reserved}"
 )
 
 
@@ -288,28 +259,17 @@ tab_map, tab_report = st.tabs(
 )
 
 
-# ------------------------------------------------------
-# CANLI DEPO HARİTASI
-# ------------------------------------------------------
-
 with tab_map:
 
     st.markdown(
         """
         <style>
-
         div[data-testid="stButton"] > button {
-
             min-height: 78px;
-
             white-space: pre-line;
-
             font-weight: 700;
-
             border-radius: 8px;
-
         }
-
         </style>
         """,
         unsafe_allow_html=True,
@@ -325,8 +285,6 @@ with tab_map:
         "A-01"
     )
 
-
-    # 10 x 10 HARİTA
 
     for r in range(10):
 
@@ -345,25 +303,20 @@ with tab_map:
             loc = by_code[code]
 
             if loc.status != "Boş":
-
                 label = (
                     f"{code}\n"
                     f"{loc.product or loc.status}\n"
                     f"{loc.quantity_kg:,.0f} kg"
                 )
-
             else:
-
                 label = (
                     f"{code}\n"
                     f"BOŞ"
                 )
 
-
             color = STATUS_COLORS[
                 loc.status
             ]
-
 
             with cols[c]:
 
@@ -373,8 +326,7 @@ with tab_map:
                     style="
                     height:7px;
                     background:{color};
-                    border-radius:
-                    5px 5px 0 0;
+                    border-radius:5px 5px 0 0;
                     ">
                     </div>
                     """,
@@ -396,25 +348,17 @@ with tab_map:
 
     st.divider()
 
-
-    # --------------------------------------------------
-    # LOKASYON DETAY
-    # --------------------------------------------------
-
     loc = get_location(
         selected_code
     )
-
 
     st.subheader(
         f"📦 Lokasyon Detayı — {loc.code}"
     )
 
-
     a, b = st.columns(
         [2, 1]
     )
-
 
     with a:
 
@@ -430,18 +374,15 @@ with tab_map:
             ),
         )
 
-
         product = st.text_input(
             "Ürün",
             value=loc.product or ""
         )
 
-
         lot = st.text_input(
             "Lot",
             value=loc.lot or ""
         )
-
 
         qty = st.number_input(
             "Miktar (kg)",
@@ -460,14 +401,10 @@ with tab_map:
             placeholder="Kullanıcı adı"
         )
 
-
         note = st.text_area(
             "Hareket Notu",
-            placeholder=(
-                "İsteğe bağlı açıklama"
-            )
+            placeholder="İsteğe bağlı açıklama"
         )
-
 
         st.write(
             "Son güncelleme:"
@@ -478,7 +415,6 @@ with tab_map:
                 "%d.%m.%Y %H:%M"
             )
         )
-
 
         if st.button(
             "💾 Lokasyonu Kaydet",
@@ -497,16 +433,11 @@ with tab_map:
             )
 
             st.success(
-                "Lokasyon güncellendi "
-                "ve hareket kaydı oluşturuldu."
+                "Lokasyon güncellendi ve hareket kaydı oluşturuldu."
             )
 
             st.rerun()
 
-
-# ------------------------------------------------------
-# HAREKET RAPORU
-# ------------------------------------------------------
 
 with tab_report:
 
@@ -514,9 +445,7 @@ with tab_report:
         "📊 Depo Hareket Raporu"
     )
 
-
     f1, f2, f3, f4 = st.columns(4)
-
 
     with f1:
 
@@ -528,7 +457,6 @@ with tab_report:
             ),
         )
 
-
     with f2:
 
         end_date = st.date_input(
@@ -536,14 +464,12 @@ with tab_report:
             value=datetime.now().date()
         )
 
-
     with f3:
 
         location_filter = st.text_input(
             "Lokasyon",
             placeholder="Örn: A-01"
         )
-
 
     with f4:
 
@@ -560,9 +486,7 @@ with tab_report:
             ],
         )
 
-
     f5, f6 = st.columns(2)
-
 
     with f5:
 
@@ -570,13 +494,11 @@ with tab_report:
             "Ürün Filtresi"
         )
 
-
     with f6:
 
         lot_filter = st.text_input(
             "Lot Filtresi"
         )
-
 
     report = movement_report(
         start_date,
@@ -587,12 +509,10 @@ with tab_report:
         movement_type
     )
 
-
     if report.empty:
 
         st.info(
-            "Seçilen filtrelerde "
-            "hareket kaydı bulunamadı."
+            "Seçilen filtrelerde hareket kaydı bulunamadı."
         )
 
     else:
@@ -602,33 +522,27 @@ with tab_report:
             "Fark (kg)"
         ].sum()
 
-
         total_out = -report.loc[
             report["Fark (kg)"] < 0,
             "Fark (kg)"
         ].sum()
 
-
         r1, r2, r3 = st.columns(3)
-
 
         r1.metric(
             "Hareket Sayısı",
             len(report)
         )
 
-
         r2.metric(
             "Toplam Artış",
             f"{total_in:,.0f} kg"
         )
 
-
         r3.metric(
             "Toplam Azalış",
             f"{total_out:,.0f} kg"
         )
-
 
         st.dataframe(
             report,
@@ -636,13 +550,11 @@ with tab_report:
             hide_index=True
         )
 
-
         csv = report.to_csv(
             index=False
         ).encode(
             "utf-8-sig"
         )
-
 
         st.download_button(
             "⬇ CSV Hareket Raporunu İndir",
