@@ -1,8 +1,19 @@
 from datetime import datetime, timedelta
+from io import BytesIO
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select, and_
+
+from openpyxl import Workbook
+from openpyxl.styles import (
+    Font,
+    PatternFill,
+    Border,
+    Side,
+    Alignment
+)
+from openpyxl.utils import get_column_letter
 
 from database import SessionLocal, Location, Movement, init_db
 
@@ -21,7 +32,7 @@ init_db()
 
 
 # ============================================================
-# DURUMLAR / RENKLER
+# DURUM / RENK TANIMLARI
 # ============================================================
 
 STATUS_COLORS = {
@@ -53,6 +64,7 @@ MOVEMENT_TYPES = [
 # ============================================================
 
 if "selected_locations" not in st.session_state:
+
     st.session_state.selected_locations = []
 
 
@@ -65,7 +77,7 @@ st.markdown(
     <style>
 
     .block-container {
-        padding-top: 1.3rem;
+        padding-top: 1.2rem;
         padding-bottom: 2rem;
     }
 
@@ -89,27 +101,31 @@ def get_locations():
 
     with SessionLocal() as db:
 
-        return db.execute(
+        locations = db.execute(
             select(Location).order_by(
                 Location.row_no,
                 Location.col_no
             )
         ).scalars().all()
 
+        return locations
+
 
 def get_location(code):
 
     with SessionLocal() as db:
 
-        return db.execute(
+        location = db.execute(
             select(Location).where(
                 Location.code == code
             )
         ).scalar_one()
 
+        return location
+
 
 # ============================================================
-# TEK LOKASYON HAREKET KAYDI
+# TEK LOKASYON KAYDET
 # ============================================================
 
 def save_location(
@@ -133,16 +149,15 @@ def save_location(
 
 
         old_status = location.status
+
         old_product = location.product
+
         old_lot = location.lot
+
         old_quantity = float(
             location.quantity_kg or 0
         )
 
-
-        # ----------------------------------------------------
-        # BOŞ DURUM
-        # ----------------------------------------------------
 
         if status == "Boş":
 
@@ -168,21 +183,29 @@ def save_location(
             else None
         )
 
+        clean_note = (
+            note.strip()
+            if note
+            else None
+        )
 
-        # ----------------------------------------------------
-        # LOKASYON GÜNCELLE
-        # ----------------------------------------------------
+        clean_user = (
+            changed_by.strip()
+            if changed_by
+            else None
+        )
+
 
         location.status = status
+
         location.product = clean_product
+
         location.lot = clean_lot
+
         location.quantity_kg = quantity
+
         location.updated_at = datetime.now()
 
-
-        # ----------------------------------------------------
-        # HAREKET KAYDI
-        # ----------------------------------------------------
 
         movement = Movement(
 
@@ -193,44 +216,42 @@ def save_location(
             movement_type=movement_type,
 
             old_status=old_status,
+
             new_status=status,
 
             old_product=old_product,
+
             new_product=clean_product,
 
             old_lot=old_lot,
+
             new_lot=clean_lot,
 
             old_quantity_kg=old_quantity,
+
             new_quantity_kg=quantity,
 
             quantity_delta_kg=(
                 quantity - old_quantity
             ),
 
-            note=(
-                note.strip()
-                if note
-                else None
-            ),
+            note=clean_note,
 
-            changed_by=(
-                changed_by.strip()
-                if changed_by
-                else None
-            ),
+            changed_by=clean_user,
 
             created_at=datetime.now()
         )
 
 
-        db.add(movement)
+        db.add(
+            movement
+        )
 
         db.commit()
 
 
 # ============================================================
-# TOPLU LOKASYON KAYDI
+# TOPLU LOKASYON KAYDET
 # ============================================================
 
 def save_multiple_locations(
@@ -253,7 +274,6 @@ def save_multiple_locations(
     )
 
 
-    # Toplam miktarı seçilen lokasyonlara böl
     quantity_per_location = (
         float(total_quantity)
         / location_count
@@ -263,14 +283,23 @@ def save_multiple_locations(
     for code in location_codes:
 
         save_location(
+
             code=code,
+
             status=status,
+
             product=product,
+
             lot=lot,
+
             quantity=quantity_per_location,
+
             movement_type=movement_type,
+
             note=note,
+
             changed_by=changed_by
+
         )
 
 
@@ -412,6 +441,826 @@ def movement_report(
 
 
 # ============================================================
+# PROFESYONEL EXCEL RAPORU
+# ============================================================
+
+def create_professional_excel_report(
+    report,
+    start_date,
+    end_date,
+    location_filter,
+    product_filter,
+    lot_filter,
+    movement_filter
+):
+
+    output = BytesIO()
+
+    workbook = Workbook()
+
+    ws = workbook.active
+
+    ws.title = "Hareketler"
+
+    summary_ws = workbook.create_sheet(
+        "Özet"
+    )
+
+
+    # ========================================================
+    # RENKLER
+    # ========================================================
+
+    dark_blue = "1F4E78"
+
+    medium_blue = "5B9BD5"
+
+    light_blue = "D9EAF7"
+
+    light_green = "E2F0D9"
+
+    light_red = "FCE4D6"
+
+    light_gray = "E7E6E6"
+
+    white = "FFFFFF"
+
+    border_color = "B7B7B7"
+
+
+    thin_border = Border(
+
+        left=Side(
+            style="thin",
+            color=border_color
+        ),
+
+        right=Side(
+            style="thin",
+            color=border_color
+        ),
+
+        top=Side(
+            style="thin",
+            color=border_color
+        ),
+
+        bottom=Side(
+            style="thin",
+            color=border_color
+        )
+
+    )
+
+
+    # ========================================================
+    # HAREKETLER SAYFASI - BAŞLIK
+    # ========================================================
+
+    ws.merge_cells(
+        "A1:N2"
+    )
+
+    ws["A1"] = (
+        "DEPO HAREKET RAPORU"
+    )
+
+    ws["A1"].font = Font(
+        size=18,
+        bold=True,
+        color=white
+    )
+
+    ws["A1"].fill = PatternFill(
+        "solid",
+        fgColor=dark_blue
+    )
+
+    ws["A1"].alignment = Alignment(
+        horizontal="center",
+        vertical="center"
+    )
+
+
+    # ========================================================
+    # RAPOR BİLGİLERİ
+    # ========================================================
+
+    ws["A4"] = "Rapor Tarihi"
+
+    ws["B4"] = datetime.now().strftime(
+        "%d.%m.%Y %H:%M"
+    )
+
+
+    ws["D4"] = "Başlangıç"
+
+    ws["E4"] = start_date.strftime(
+        "%d.%m.%Y"
+    )
+
+
+    ws["G4"] = "Bitiş"
+
+    ws["H4"] = end_date.strftime(
+        "%d.%m.%Y"
+    )
+
+
+    for cell in [
+        "A4",
+        "D4",
+        "G4"
+    ]:
+
+        ws[cell].font = Font(
+            bold=True,
+            color=white
+        )
+
+        ws[cell].fill = PatternFill(
+            "solid",
+            fgColor=medium_blue
+        )
+
+        ws[cell].border = thin_border
+
+
+    # ========================================================
+    # FİLTRELER
+    # ========================================================
+
+    ws["A6"] = "Lokasyon"
+
+    ws["B6"] = (
+        location_filter
+        or "Tümü"
+    )
+
+
+    ws["D6"] = "Ürün"
+
+    ws["E6"] = (
+        product_filter
+        or "Tümü"
+    )
+
+
+    ws["G6"] = "Lot"
+
+    ws["H6"] = (
+        lot_filter
+        or "Tümü"
+    )
+
+
+    ws["J6"] = "Hareket Tipi"
+
+    ws["K6"] = (
+        movement_filter
+    )
+
+
+    for cell in [
+        "A6",
+        "D6",
+        "G6",
+        "J6"
+    ]:
+
+        ws[cell].font = Font(
+            bold=True
+        )
+
+        ws[cell].fill = PatternFill(
+            "solid",
+            fgColor=light_gray
+        )
+
+        ws[cell].border = thin_border
+
+
+    # ========================================================
+    # KPI HESAPLARI
+    # ========================================================
+
+    total_positive = report.loc[
+        report["Fark (kg)"] > 0,
+        "Fark (kg)"
+    ].sum()
+
+
+    total_negative = -report.loc[
+        report["Fark (kg)"] < 0,
+        "Fark (kg)"
+    ].sum()
+
+
+    ws["A8"] = "Toplam Hareket"
+
+    ws["B8"] = len(
+        report
+    )
+
+
+    ws["D8"] = "Toplam Giriş / Artış"
+
+    ws["E8"] = total_positive
+
+
+    ws["G8"] = "Toplam Çıkış / Azalış"
+
+    ws["H8"] = total_negative
+
+
+    ws["A8"].fill = PatternFill(
+        "solid",
+        fgColor=light_blue
+    )
+
+    ws["D8"].fill = PatternFill(
+        "solid",
+        fgColor=light_green
+    )
+
+    ws["G8"].fill = PatternFill(
+        "solid",
+        fgColor=light_red
+    )
+
+
+    for cell in [
+        "A8",
+        "D8",
+        "G8"
+    ]:
+
+        ws[cell].font = Font(
+            bold=True
+        )
+
+        ws[cell].border = thin_border
+
+
+    ws["B8"].border = thin_border
+
+    ws["E8"].border = thin_border
+
+    ws["H8"].border = thin_border
+
+
+    ws["E8"].number_format = (
+        '#,##0.00 "kg"'
+    )
+
+    ws["H8"].number_format = (
+        '#,##0.00 "kg"'
+    )
+
+
+    # ========================================================
+    # TABLO BAŞLIKLARI
+    # ========================================================
+
+    table_start_row = 11
+
+    headers = list(
+        report.columns
+    )
+
+
+    for column_index, header in enumerate(
+        headers,
+        start=1
+    ):
+
+        cell = ws.cell(
+            row=table_start_row,
+            column=column_index
+        )
+
+        cell.value = header
+
+        cell.font = Font(
+            bold=True,
+            color=white
+        )
+
+        cell.fill = PatternFill(
+            "solid",
+            fgColor=dark_blue
+        )
+
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center"
+        )
+
+        cell.border = thin_border
+
+
+    # ========================================================
+    # TABLO VERİLERİ
+    # ========================================================
+
+    for row_index, row in enumerate(
+        report.itertuples(
+            index=False
+        ),
+        start=table_start_row + 1
+    ):
+
+        for column_index, value in enumerate(
+            row,
+            start=1
+        ):
+
+            cell = ws.cell(
+                row=row_index,
+                column=column_index
+            )
+
+            cell.value = value
+
+            cell.border = thin_border
+
+            cell.alignment = Alignment(
+                vertical="center"
+            )
+
+
+            header_name = headers[
+                column_index - 1
+            ]
+
+
+            if header_name == "Tarih / Saat":
+
+                cell.number_format = (
+                    "dd.mm.yyyy hh:mm"
+                )
+
+
+            if header_name in [
+                "Eski Miktar (kg)",
+                "Yeni Miktar (kg)",
+                "Fark (kg)"
+            ]:
+
+                cell.number_format = (
+                    '#,##0.00'
+                )
+
+
+            if header_name == "Fark (kg)":
+
+                try:
+
+                    numeric_value = float(
+                        value or 0
+                    )
+
+                except Exception:
+
+                    numeric_value = 0
+
+
+                if numeric_value > 0:
+
+                    cell.fill = PatternFill(
+                        "solid",
+                        fgColor=light_green
+                    )
+
+
+                elif numeric_value < 0:
+
+                    cell.fill = PatternFill(
+                        "solid",
+                        fgColor=light_red
+                    )
+
+
+    # ========================================================
+    # OTOMATİK FİLTRE
+    # ========================================================
+
+    last_row = (
+        table_start_row
+        + len(report)
+    )
+
+    last_column = len(
+        headers
+    )
+
+
+    if last_row >= table_start_row:
+
+        ws.auto_filter.ref = (
+
+            f"A{table_start_row}:"
+            f"{get_column_letter(last_column)}"
+            f"{last_row}"
+
+        )
+
+
+    # ========================================================
+    # SABİTLEME
+    # ========================================================
+
+    ws.freeze_panes = (
+        f"A{table_start_row + 1}"
+    )
+
+
+    # ========================================================
+    # KOLON GENİŞLİKLERİ
+    # ========================================================
+
+    widths = {
+
+        "A": 20,
+
+        "B": 14,
+
+        "C": 20,
+
+        "D": 16,
+
+        "E": 16,
+
+        "F": 22,
+
+        "G": 22,
+
+        "H": 20,
+
+        "I": 20,
+
+        "J": 18,
+
+        "K": 18,
+
+        "L": 16,
+
+        "M": 38,
+
+        "N": 22
+
+    }
+
+
+    for column_letter, width in (
+        widths.items()
+    ):
+
+        ws.column_dimensions[
+            column_letter
+        ].width = width
+
+
+    ws.row_dimensions[1].height = 28
+
+    ws.sheet_view.showGridLines = False
+
+
+    # ========================================================
+    # ÖZET SAYFASI
+    # ========================================================
+
+    summary_ws.merge_cells(
+        "A1:D2"
+    )
+
+
+    summary_ws["A1"] = (
+        "DEPO HAREKET RAPORU - ÖZET"
+    )
+
+
+    summary_ws["A1"].font = Font(
+        size=18,
+        bold=True,
+        color=white
+    )
+
+
+    summary_ws["A1"].fill = PatternFill(
+        "solid",
+        fgColor=dark_blue
+    )
+
+
+    summary_ws["A1"].alignment = Alignment(
+        horizontal="center",
+        vertical="center"
+    )
+
+
+    # ========================================================
+    # ÖZET RAPOR BİLGİLERİ
+    # ========================================================
+
+    summary_ws["A4"] = (
+        "Rapor Tarihi"
+    )
+
+    summary_ws["B4"] = (
+        datetime.now().strftime(
+            "%d.%m.%Y %H:%M"
+        )
+    )
+
+
+    summary_ws["A5"] = (
+        "Rapor Dönemi"
+    )
+
+    summary_ws["B5"] = (
+        f"{start_date.strftime('%d.%m.%Y')} "
+        f"- "
+        f"{end_date.strftime('%d.%m.%Y')}"
+    )
+
+
+    summary_ws["A7"] = (
+        "Toplam Hareket"
+    )
+
+    summary_ws["B7"] = len(
+        report
+    )
+
+
+    summary_ws["A8"] = (
+        "Toplam Giriş / Artış"
+    )
+
+    summary_ws["B8"] = (
+        total_positive
+    )
+
+
+    summary_ws["A9"] = (
+        "Toplam Çıkış / Azalış"
+    )
+
+    summary_ws["B9"] = (
+        total_negative
+    )
+
+
+    summary_ws["B8"].number_format = (
+        '#,##0.00 "kg"'
+    )
+
+    summary_ws["B9"].number_format = (
+        '#,##0.00 "kg"'
+    )
+
+
+    for row in [
+        4,
+        5,
+        7,
+        8,
+        9
+    ]:
+
+        summary_ws[
+            f"A{row}"
+        ].font = Font(
+            bold=True
+        )
+
+        summary_ws[
+            f"A{row}"
+        ].fill = PatternFill(
+            "solid",
+            fgColor=light_blue
+        )
+
+        summary_ws[
+            f"A{row}"
+        ].border = thin_border
+
+        summary_ws[
+            f"B{row}"
+        ].border = thin_border
+
+
+    # ========================================================
+    # HAREKET TİPİ ÖZETİ
+    # ========================================================
+
+    summary_ws["A12"] = (
+        "Hareket Tipi"
+    )
+
+    summary_ws["B12"] = (
+        "Adet"
+    )
+
+
+    for cell_name in [
+        "A12",
+        "B12"
+    ]:
+
+        summary_ws[
+            cell_name
+        ].font = Font(
+            bold=True,
+            color=white
+        )
+
+        summary_ws[
+            cell_name
+        ].fill = PatternFill(
+            "solid",
+            fgColor=dark_blue
+        )
+
+        summary_ws[
+            cell_name
+        ].border = thin_border
+
+
+    movement_counts = (
+
+        report[
+            "Hareket Tipi"
+        ]
+        .fillna(
+            "Belirsiz"
+        )
+        .value_counts()
+
+    )
+
+
+    summary_row = 13
+
+
+    for movement_name, count in (
+        movement_counts.items()
+    ):
+
+        summary_ws.cell(
+            row=summary_row,
+            column=1,
+            value=movement_name
+        )
+
+        summary_ws.cell(
+            row=summary_row,
+            column=2,
+            value=count
+        )
+
+
+        summary_ws.cell(
+            row=summary_row,
+            column=1
+        ).border = thin_border
+
+
+        summary_ws.cell(
+            row=summary_row,
+            column=2
+        ).border = thin_border
+
+
+        summary_row += 1
+
+
+    # ========================================================
+    # ÜRÜN BAZLI ÖZET
+    # ========================================================
+
+    summary_ws["D12"] = (
+        "Ürün"
+    )
+
+    summary_ws["E12"] = (
+        "Hareket Adedi"
+    )
+
+
+    for cell_name in [
+        "D12",
+        "E12"
+    ]:
+
+        summary_ws[
+            cell_name
+        ].font = Font(
+            bold=True,
+            color=white
+        )
+
+        summary_ws[
+            cell_name
+        ].fill = PatternFill(
+            "solid",
+            fgColor=dark_blue
+        )
+
+        summary_ws[
+            cell_name
+        ].border = thin_border
+
+
+    product_counts = (
+
+        report[
+            "Yeni Ürün"
+        ]
+        .fillna(
+            "Boş"
+        )
+        .value_counts()
+
+    )
+
+
+    product_row = 13
+
+
+    for product_name, count in (
+        product_counts.items()
+    ):
+
+        summary_ws.cell(
+            row=product_row,
+            column=4,
+            value=product_name
+        )
+
+        summary_ws.cell(
+            row=product_row,
+            column=5,
+            value=count
+        )
+
+
+        summary_ws.cell(
+            row=product_row,
+            column=4
+        ).border = thin_border
+
+
+        summary_ws.cell(
+            row=product_row,
+            column=5
+        ).border = thin_border
+
+
+        product_row += 1
+
+
+    summary_ws.column_dimensions[
+        "A"
+    ].width = 28
+
+    summary_ws.column_dimensions[
+        "B"
+    ].width = 22
+
+    summary_ws.column_dimensions[
+        "C"
+    ].width = 6
+
+    summary_ws.column_dimensions[
+        "D"
+    ].width = 28
+
+    summary_ws.column_dimensions[
+        "E"
+    ].width = 18
+
+
+    summary_ws.sheet_view.showGridLines = False
+
+
+    # ========================================================
+    # DOSYAYI KAYDET
+    # ========================================================
+
+    workbook.save(
+        output
+    )
+
+    output.seek(
+        0
+    )
+
+    return output
+
+
+# ============================================================
 # BAŞLIK
 # ============================================================
 
@@ -440,9 +1289,9 @@ filled_locations = sum(
 
     1
 
-    for x in locations
+    for location in locations
 
-    if x.status != "Boş"
+    if location.status != "Boş"
 
 )
 
@@ -457,9 +1306,9 @@ blocked_locations = sum(
 
     1
 
-    for x in locations
+    for location in locations
 
-    if x.status == "Bloke"
+    if location.status == "Bloke"
 
 )
 
@@ -468,9 +1317,9 @@ reserved_locations = sum(
 
     1
 
-    for x in locations
+    for location in locations
 
-    if x.status == "Rezerve"
+    if location.status == "Rezerve"
 
 )
 
@@ -478,9 +1327,11 @@ reserved_locations = sum(
 if total_locations:
 
     occupancy_rate = (
+
         filled_locations
         / total_locations
         * 100
+
     )
 
 else:
@@ -569,7 +1420,7 @@ for index, (
 
 
 # ============================================================
-# ANA SEKMELER
+# SEKME
 # ============================================================
 
 tab_map, tab_report = st.tabs(
@@ -583,7 +1434,7 @@ tab_map, tab_report = st.tabs(
 
 
 # ============================================================
-# CANLI HARİTA
+# CANLI DEPO HARİTASI
 # ============================================================
 
 with tab_map:
@@ -594,14 +1445,13 @@ with tab_map:
         location.code:
             location
 
-        for location
-        in locations
+        for location in locations
 
     }
 
 
     # ========================================================
-    # SEÇİM BİLGİSİ
+    # ÜST BİLGİ / SEÇİMLER
     # ========================================================
 
     top1, top2, top3 = st.columns(
@@ -630,10 +1480,12 @@ with tab_map:
         else:
 
             st.success(
+
                 f"{selected_count} lokasyon seçildi: "
                 + ", ".join(
                     st.session_state.selected_locations
                 )
+
             )
 
 
@@ -645,8 +1497,12 @@ with tab_map:
         ):
 
             st.session_state.selected_locations = [
+
                 location.code
-                for location in locations
+
+                for location
+                in locations
+
             ]
 
             st.rerun()
@@ -668,7 +1524,9 @@ with tab_map:
     # HARİTA
     # ========================================================
 
-    for row_number in range(10):
+    for row_number in range(
+        10
+    ):
 
 
         columns = st.columns(
@@ -677,7 +1535,9 @@ with tab_map:
         )
 
 
-        for column_number in range(10):
+        for column_number in range(
+            10
+        ):
 
 
             code = (
@@ -713,14 +1573,12 @@ with tab_map:
             )
 
 
-            # -------------------------------------------------
-            # KUTU İÇERİĞİ
-            # -------------------------------------------------
-
             if status == "Boş":
 
                 product_text = "BOŞ"
+
                 lot_text = ""
+
                 quantity_text = ""
 
             else:
@@ -740,10 +1598,6 @@ with tab_map:
                 )
 
 
-            # -------------------------------------------------
-            # SEÇİLİ ÇERÇEVE
-            # -------------------------------------------------
-
             if is_selected:
 
                 border = (
@@ -762,10 +1616,6 @@ with tab_map:
 
                 selected_text = ""
 
-
-            # -------------------------------------------------
-            # KUTU
-            # -------------------------------------------------
 
             with columns[
                 column_number
@@ -878,7 +1728,7 @@ with tab_map:
 
 
     # ========================================================
-    # TOPLU İŞLEM ALANI
+    # TOPLU İŞLEM
     # ========================================================
 
     st.divider()
@@ -892,7 +1742,7 @@ with tab_map:
     if not selected_codes:
 
         st.warning(
-            "Lokasyon işlemi yapmak için haritadan en az bir lokasyon seç."
+            "Toplu işlem yapmak için en az bir lokasyon seç."
         )
 
 
@@ -905,13 +1755,12 @@ with tab_map:
 
 
         st.caption(
-            f"{len(selected_codes)} lokasyon üzerinde işlem yapılacak."
+
+            f"{len(selected_codes)} lokasyon "
+            f"üzerinde işlem yapılacak."
+
         )
 
-
-        # ====================================================
-        # FORM
-        # ====================================================
 
         left, middle, right = st.columns(
             [1.2, 1.2, 1]
@@ -929,7 +1778,9 @@ with tab_map:
                     STATUS_COLORS.keys()
                 ),
 
-                index=1
+                index=1,
+
+                key="bulk_status"
 
             )
 
@@ -938,9 +1789,9 @@ with tab_map:
 
                 "Ürün",
 
-                placeholder=(
-                    "Örn: GS840"
-                )
+                placeholder="Örn: GS840",
+
+                key="bulk_product"
 
             )
 
@@ -949,9 +1800,9 @@ with tab_map:
 
                 "Lot",
 
-                placeholder=(
-                    "Örn: 2608B021"
-                )
+                placeholder="Örn: 2608B021",
+
+                key="bulk_lot"
 
             )
 
@@ -967,7 +1818,9 @@ with tab_map:
 
                 value=0.0,
 
-                step=100.0
+                step=100.0,
+
+                key="bulk_quantity"
 
             )
 
@@ -976,7 +1829,9 @@ with tab_map:
 
                 "Hareket Tipi",
 
-                MOVEMENT_TYPES
+                MOVEMENT_TYPES,
+
+                key="bulk_movement_type"
 
             )
 
@@ -987,7 +1842,9 @@ with tab_map:
 
                 placeholder=(
                     "Ad Soyad / Kullanıcı"
-                )
+                ),
+
+                key="bulk_changed_by"
 
             )
 
@@ -1003,13 +1860,15 @@ with tab_map:
                     "Örn: Üretimden depoya toplu giriş."
                 ),
 
-                height=108
+                height=108,
+
+                key="bulk_note"
 
             )
 
 
         # ====================================================
-        # MİKTAR DAĞILIMI
+        # DAĞILIM HESABI
         # ====================================================
 
         location_count = len(
@@ -1020,8 +1879,10 @@ with tab_map:
         if location_count > 0:
 
             quantity_per_location = (
+
                 total_quantity
                 / location_count
+
             )
 
         else:
@@ -1155,37 +2016,21 @@ with tab_map:
 
                 save_multiple_locations(
 
-                    location_codes=(
-                        selected_codes
-                    ),
+                    location_codes=selected_codes,
 
-                    status=(
-                        selected_status
-                    ),
+                    status=selected_status,
 
-                    product=(
-                        selected_product
-                    ),
+                    product=selected_product,
 
-                    lot=(
-                        selected_lot
-                    ),
+                    lot=selected_lot,
 
-                    total_quantity=(
-                        total_quantity
-                    ),
+                    total_quantity=total_quantity,
 
-                    movement_type=(
-                        selected_movement_type
-                    ),
+                    movement_type=selected_movement_type,
 
-                    note=(
-                        movement_note
-                    ),
+                    note=movement_note,
 
-                    changed_by=(
-                        changed_by
-                    )
+                    changed_by=changed_by
 
                 )
 
@@ -1194,9 +2039,11 @@ with tab_map:
 
 
                 st.success(
+
                     f"{location_count} lokasyona "
                     f"toplam {total_quantity:,.2f} kg "
                     f"başarıyla dağıtıldı."
+
                 )
 
 
@@ -1215,10 +2062,8 @@ with tab_report:
     )
 
 
-    filter1, filter2, filter3, filter4 = (
-        st.columns(
-            4
-        )
+    filter1, filter2, filter3, filter4 = st.columns(
+        4
     )
 
 
@@ -1231,7 +2076,9 @@ with tab_report:
             value=(
                 datetime.now().date()
                 - timedelta(days=30)
-            )
+            ),
+
+            key="report_start_date"
 
         )
 
@@ -1242,7 +2089,9 @@ with tab_report:
 
             "Bitiş Tarihi",
 
-            value=datetime.now().date()
+            value=datetime.now().date(),
+
+            key="report_end_date"
 
         )
 
@@ -1253,7 +2102,9 @@ with tab_report:
 
             "Lokasyon",
 
-            placeholder="Örn: J-04"
+            placeholder="Örn: J-04",
+
+            key="report_location"
 
         )
 
@@ -1267,7 +2118,9 @@ with tab_report:
             [
                 "Tümü"
             ]
-            + MOVEMENT_TYPES
+            + MOVEMENT_TYPES,
+
+            key="report_movement"
 
         )
 
@@ -1283,7 +2136,9 @@ with tab_report:
 
             "Ürün Filtresi",
 
-            placeholder="Örn: GS840"
+            placeholder="Örn: GS840",
+
+            key="report_product"
 
         )
 
@@ -1294,10 +2149,16 @@ with tab_report:
 
             "Lot Filtresi",
 
-            placeholder="Örn: 2608B021"
+            placeholder="Örn: 2608B021",
+
+            key="report_lot"
 
         )
 
+
+    # ========================================================
+    # RAPORU GETİR
+    # ========================================================
 
     report = movement_report(
 
@@ -1317,7 +2178,7 @@ with tab_report:
 
 
     # ========================================================
-    # RAPOR
+    # RAPOR SONUÇ
     # ========================================================
 
     if report.empty:
@@ -1333,7 +2194,9 @@ with tab_report:
 
         total_positive = report.loc[
 
-            report["Fark (kg)"] > 0,
+            report[
+                "Fark (kg)"
+            ] > 0,
 
             "Fark (kg)"
 
@@ -1342,43 +2205,45 @@ with tab_report:
 
         total_negative = -report.loc[
 
-            report["Fark (kg)"] < 0,
+            report[
+                "Fark (kg)"
+            ] < 0,
 
             "Fark (kg)"
 
         ].sum()
 
 
-        report_kpi1, report_kpi2, report_kpi3 = (
-            st.columns(
-                3
-            )
+        r1, r2, r3 = st.columns(
+            3
         )
 
 
-        report_kpi1.metric(
+        r1.metric(
 
             "Toplam Hareket",
 
-            len(report)
+            len(
+                report
+            )
 
         )
 
 
-        report_kpi2.metric(
+        r2.metric(
 
-            "Toplam Artış",
+            "Toplam Giriş / Artış",
 
-            f"{total_positive:,.0f} kg"
+            f"{total_positive:,.2f} kg"
 
         )
 
 
-        report_kpi3.metric(
+        r3.metric(
 
-            "Toplam Azalış",
+            "Toplam Çıkış / Azalış",
 
-            f"{total_negative:,.0f} kg"
+            f"{total_negative:,.2f} kg"
 
         )
 
@@ -1394,28 +2259,50 @@ with tab_report:
         )
 
 
-        csv_data = report.to_csv(
-            index=False
-        ).encode(
-            "utf-8-sig"
+        # ====================================================
+        # PROFESYONEL EXCEL RAPORU
+        # ====================================================
+
+        excel_report = create_professional_excel_report(
+
+            report=report,
+
+            start_date=start_date,
+
+            end_date=end_date,
+
+            location_filter=location_filter,
+
+            product_filter=product_filter,
+
+            lot_filter=lot_filter,
+
+            movement_filter=movement_filter
+
         )
 
 
         st.download_button(
 
-            "⬇ CSV Hareket Raporunu İndir",
+            "📊 PROFESYONEL EXCEL HAREKET RAPORUNU İNDİR",
 
-            data=csv_data,
+            data=excel_report,
 
             file_name=(
 
-                f"depo_hareket_raporu_"
+                f"Depo_Hareket_Raporu_"
                 f"{start_date}_"
-                f"{end_date}.csv"
+                f"{end_date}.xlsx"
 
             ),
 
-            mime="text/csv",
+            mime=(
+                "application/"
+                "vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+
+            type="primary",
 
             use_container_width=True
 
