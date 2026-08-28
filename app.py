@@ -21,7 +21,7 @@ init_db()
 
 
 # ============================================================
-# DURUMLAR VE RENKLER
+# DURUMLAR / RENKLER
 # ============================================================
 
 STATUS_COLORS = {
@@ -49,7 +49,15 @@ MOVEMENT_TYPES = [
 
 
 # ============================================================
-# SAYFA TASARIMI
+# SESSION STATE
+# ============================================================
+
+if "selected_locations" not in st.session_state:
+    st.session_state.selected_locations = []
+
+
+# ============================================================
+# CSS
 # ============================================================
 
 st.markdown(
@@ -57,7 +65,7 @@ st.markdown(
     <style>
 
     .block-container {
-        padding-top: 1.5rem;
+        padding-top: 1.3rem;
         padding-bottom: 2rem;
     }
 
@@ -81,28 +89,28 @@ def get_locations():
 
     with SessionLocal() as db:
 
-        locations = db.execute(
+        return db.execute(
             select(Location).order_by(
                 Location.row_no,
                 Location.col_no
             )
         ).scalars().all()
 
-        return locations
-
 
 def get_location(code):
 
     with SessionLocal() as db:
 
-        location = db.execute(
+        return db.execute(
             select(Location).where(
                 Location.code == code
             )
         ).scalar_one()
 
-        return location
 
+# ============================================================
+# TEK LOKASYON HAREKET KAYDI
+# ============================================================
 
 def save_location(
     code,
@@ -124,32 +132,23 @@ def save_location(
         ).scalar_one()
 
 
-        # ====================================================
-        # ESKİ DEĞERLER
-        # ====================================================
-
         old_status = location.status
-
         old_product = location.product
-
         old_lot = location.lot
-
         old_quantity = float(
             location.quantity_kg or 0
         )
 
 
-        # ====================================================
-        # BOŞ DURUMU
-        # ====================================================
+        # ----------------------------------------------------
+        # BOŞ DURUM
+        # ----------------------------------------------------
 
         if status == "Boş":
 
             product = None
-
             lot = None
-
-            quantity = 0.0
+            quantity = 0
 
 
         quantity = float(
@@ -157,32 +156,33 @@ def save_location(
         )
 
 
-        # ====================================================
-        # LOKASYON GÜNCELLEME
-        # ====================================================
-
-        location.status = status
-
-        location.product = (
+        clean_product = (
             product.strip()
             if product
             else None
         )
 
-        location.lot = (
+        clean_lot = (
             lot.strip()
             if lot
             else None
         )
 
-        location.quantity_kg = quantity
 
+        # ----------------------------------------------------
+        # LOKASYON GÜNCELLE
+        # ----------------------------------------------------
+
+        location.status = status
+        location.product = clean_product
+        location.lot = clean_lot
+        location.quantity_kg = quantity
         location.updated_at = datetime.now()
 
 
-        # ====================================================
+        # ----------------------------------------------------
         # HAREKET KAYDI
-        # ====================================================
+        # ----------------------------------------------------
 
         movement = Movement(
 
@@ -193,32 +193,19 @@ def save_location(
             movement_type=movement_type,
 
             old_status=old_status,
-
             new_status=status,
 
             old_product=old_product,
-
-            new_product=(
-                product.strip()
-                if product
-                else None
-            ),
+            new_product=clean_product,
 
             old_lot=old_lot,
-
-            new_lot=(
-                lot.strip()
-                if lot
-                else None
-            ),
+            new_lot=clean_lot,
 
             old_quantity_kg=old_quantity,
-
             new_quantity_kg=quantity,
 
             quantity_delta_kg=(
-                quantity
-                - old_quantity
+                quantity - old_quantity
             ),
 
             note=(
@@ -237,11 +224,54 @@ def save_location(
         )
 
 
-        db.add(
-            movement
-        )
+        db.add(movement)
 
         db.commit()
+
+
+# ============================================================
+# TOPLU LOKASYON KAYDI
+# ============================================================
+
+def save_multiple_locations(
+    location_codes,
+    status,
+    product,
+    lot,
+    total_quantity,
+    movement_type,
+    note,
+    changed_by
+):
+
+    if not location_codes:
+        return
+
+
+    location_count = len(
+        location_codes
+    )
+
+
+    # Toplam miktarı seçilen lokasyonlara böl
+    quantity_per_location = (
+        float(total_quantity)
+        / location_count
+    )
+
+
+    for code in location_codes:
+
+        save_location(
+            code=code,
+            status=status,
+            product=product,
+            lot=lot,
+            quantity=quantity_per_location,
+            movement_type=movement_type,
+            note=note,
+            changed_by=changed_by
+        )
 
 
 # ============================================================
@@ -445,14 +475,12 @@ reserved_locations = sum(
 )
 
 
-if total_locations > 0:
+if total_locations:
 
     occupancy_rate = (
-
         filled_locations
         / total_locations
         * 100
-
     )
 
 else:
@@ -461,7 +489,7 @@ else:
 
 
 # ============================================================
-# KPI ALANI
+# KPI
 # ============================================================
 
 k1, k2, k3, k4 = st.columns(
@@ -503,7 +531,7 @@ st.caption(
 
 
 # ============================================================
-# RENK AÇIKLAMALARI
+# RENK AÇIKLAMASI
 # ============================================================
 
 legend_columns = st.columns(
@@ -517,7 +545,6 @@ for index, (
 ) in enumerate(
     STATUS_COLORS.items()
 ):
-
 
     with legend_columns[index]:
 
@@ -573,24 +600,72 @@ with tab_map:
     }
 
 
-    selected_code = st.session_state.get(
-        "selected_code",
-        "A-01"
+    # ========================================================
+    # SEÇİM BİLGİSİ
+    # ========================================================
+
+    top1, top2, top3 = st.columns(
+        [2, 1, 1]
     )
 
 
-    st.subheader(
-        "Depo Yerleşimi"
-    )
+    with top1:
+
+        st.subheader(
+            "Depo Yerleşimi"
+        )
 
 
-    st.caption(
-        "Bir lokasyonu düzenlemek için altındaki SEÇ butonuna bas."
-    )
+        selected_count = len(
+            st.session_state.selected_locations
+        )
+
+
+        if selected_count == 0:
+
+            st.info(
+                "İşlem yapmak istediğin lokasyonları seç."
+            )
+
+        else:
+
+            st.success(
+                f"{selected_count} lokasyon seçildi: "
+                + ", ".join(
+                    st.session_state.selected_locations
+                )
+            )
+
+
+    with top2:
+
+        if st.button(
+            "✅ Tümünü Seç",
+            use_container_width=True
+        ):
+
+            st.session_state.selected_locations = [
+                location.code
+                for location in locations
+            ]
+
+            st.rerun()
+
+
+    with top3:
+
+        if st.button(
+            "❌ Seçimi Temizle",
+            use_container_width=True
+        ):
+
+            st.session_state.selected_locations = []
+
+            st.rerun()
 
 
     # ========================================================
-    # 10 X 10 DEPO HARİTASI
+    # HARİTA
     # ========================================================
 
     for row_number in range(10):
@@ -626,60 +701,57 @@ with tab_map:
             )
 
 
-            color = (
-                STATUS_COLORS.get(
-                    status,
-                    "#E5E7EB"
-                )
+            color = STATUS_COLORS.get(
+                status,
+                "#E5E7EB"
             )
 
 
-            # =================================================
+            is_selected = (
+                code
+                in st.session_state.selected_locations
+            )
+
+
+            # -------------------------------------------------
             # KUTU İÇERİĞİ
-            # =================================================
+            # -------------------------------------------------
 
             if status == "Boş":
 
                 product_text = "BOŞ"
-
                 lot_text = ""
-
                 quantity_text = ""
-
 
             else:
 
                 product_text = (
-
                     location.product
                     or status
-
                 )
-
 
                 lot_text = (
-
                     location.lot
                     or "-"
-
                 )
-
 
                 quantity_text = (
-
                     f"{float(location.quantity_kg or 0):,.0f} kg"
-
                 )
 
 
-            # =================================================
-            # SEÇİLİ LOKASYON ÇERÇEVESİ
-            # =================================================
+            # -------------------------------------------------
+            # SEÇİLİ ÇERÇEVE
+            # -------------------------------------------------
 
-            if code == selected_code:
+            if is_selected:
 
                 border = (
                     "4px solid #111827"
+                )
+
+                selected_text = (
+                    "✓ SEÇİLDİ"
                 )
 
             else:
@@ -688,10 +760,12 @@ with tab_map:
                     "1px solid #6B7280"
                 )
 
+                selected_text = ""
 
-            # =================================================
-            # RENKLİ KUTU
-            # =================================================
+
+            # -------------------------------------------------
+            # KUTU
+            # -------------------------------------------------
 
             with columns[
                 column_number
@@ -705,7 +779,7 @@ with tab_map:
                         background-color:{color};
                         border:{border};
                         border-radius:9px;
-                        height:105px;
+                        height:112px;
                         padding:7px 4px;
                         text-align:center;
                         color:#111827;
@@ -720,7 +794,6 @@ with tab_map:
                             font-size:16px;
                             font-weight:900;
                             line-height:1.15;
-                            margin-bottom:4px;
                         ">
                             {code}
                         </div>
@@ -732,7 +805,7 @@ with tab_map:
                             overflow:hidden;
                             white-space:nowrap;
                             text-overflow:ellipsis;
-                            line-height:1.2;
+                            margin-top:3px;
                         ">
                             {product_text}
                         </div>
@@ -756,175 +829,159 @@ with tab_map:
                             {quantity_text}
                         </div>
 
+                        <div style="
+                            font-size:9px;
+                            font-weight:900;
+                            margin-top:4px;
+                        ">
+                            {selected_text}
+                        </div>
+
                     </div>
                     """
 
                 )
 
 
+                button_text = (
+                    "ÇIKAR"
+                    if is_selected
+                    else "SEÇ"
+                )
+
+
                 if st.button(
 
-                    "SEÇ",
+                    button_text,
 
-                    key=(
-                        f"select_{code}"
-                    ),
+                    key=f"select_{code}",
 
                     use_container_width=True
 
                 ):
 
 
-                    st.session_state[
-                        "selected_code"
-                    ] = code
+                    if is_selected:
+
+                        st.session_state.selected_locations.remove(
+                            code
+                        )
+
+                    else:
+
+                        st.session_state.selected_locations.append(
+                            code
+                        )
 
 
                     st.rerun()
 
 
     # ========================================================
-    # LOKASYON DETAYI
+    # TOPLU İŞLEM ALANI
     # ========================================================
 
     st.divider()
 
 
-    selected_code = (
-        st.session_state.get(
-            "selected_code",
-            "A-01"
+    selected_codes = (
+        st.session_state.selected_locations
+    )
+
+
+    if not selected_codes:
+
+        st.warning(
+            "Lokasyon işlemi yapmak için haritadan en az bir lokasyon seç."
         )
-    )
 
 
-    selected_location = (
-        get_location(
-            selected_code
+    else:
+
+
+        st.subheader(
+            "📦 Toplu Lokasyon İşlemi"
         )
-    )
 
 
-    st.subheader(
-        f"📦 Lokasyon Detayı — {selected_location.code}"
-    )
+        st.caption(
+            f"{len(selected_codes)} lokasyon üzerinde işlem yapılacak."
+        )
 
 
-    left_column, middle_column, right_column = (
-        st.columns(
+        # ====================================================
+        # FORM
+        # ====================================================
+
+        left, middle, right = st.columns(
             [1.2, 1.2, 1]
         )
-    )
 
 
-    # ========================================================
-    # SOL ALAN
-    # ========================================================
-
-    with left_column:
+        with left:
 
 
-        status_options = list(
-            STATUS_COLORS.keys()
-        )
-
-
-        current_status_index = (
-            status_options.index(
-                selected_location.status
-            )
-        )
-
-
-        selected_status = (
-            st.selectbox(
+            selected_status = st.selectbox(
 
                 "Durum",
 
-                status_options,
+                list(
+                    STATUS_COLORS.keys()
+                ),
 
-                index=(
-                    current_status_index
-                )
+                index=1
 
             )
-        )
 
 
-        selected_product = (
-            st.text_input(
+            selected_product = st.text_input(
 
                 "Ürün",
-
-                value=(
-                    selected_location.product
-                    or ""
-                ),
 
                 placeholder=(
                     "Örn: GS840"
                 )
 
             )
-        )
 
 
-        selected_lot = (
-            st.text_input(
+            selected_lot = st.text_input(
 
                 "Lot",
-
-                value=(
-                    selected_location.lot
-                    or ""
-                ),
 
                 placeholder=(
                     "Örn: 2608B021"
                 )
 
             )
-        )
 
 
-    # ========================================================
-    # ORTA ALAN
-    # ========================================================
-
-    with middle_column:
+        with middle:
 
 
-        selected_quantity = (
-            st.number_input(
+            total_quantity = st.number_input(
 
-                "Miktar (kg)",
+                "TOPLAM Miktar (kg)",
 
                 min_value=0.0,
 
-                value=float(
-                    selected_location.quantity_kg
-                    or 0
-                ),
+                value=0.0,
 
                 step=100.0
 
             )
-        )
 
 
-        selected_movement_type = (
-            st.selectbox(
+            selected_movement_type = st.selectbox(
 
                 "Hareket Tipi",
 
                 MOVEMENT_TYPES
 
             )
-        )
 
 
-        changed_by = (
-            st.text_input(
+            changed_by = st.text_input(
 
                 "İşlemi Yapan",
 
@@ -933,133 +990,217 @@ with tab_map:
                 )
 
             )
-        )
 
 
-    # ========================================================
-    # SAĞ ALAN
-    # ========================================================
-
-    with right_column:
+        with right:
 
 
-        movement_note = (
-            st.text_area(
+            movement_note = st.text_area(
 
                 "Hareket Açıklaması",
 
                 placeholder=(
-                    "Örn: Üretimden depoya alındı."
+                    "Örn: Üretimden depoya toplu giriş."
                 ),
 
-                height=110
+                height=108
 
             )
+
+
+        # ====================================================
+        # MİKTAR DAĞILIMI
+        # ====================================================
+
+        location_count = len(
+            selected_codes
         )
 
 
-        st.write(
-            "**Son Güncelleme**"
-        )
+        if location_count > 0:
 
-
-        st.write(
-
-            selected_location.updated_at.strftime(
-                "%d.%m.%Y %H:%M:%S"
+            quantity_per_location = (
+                total_quantity
+                / location_count
             )
-
-        )
-
-
-    # ========================================================
-    # KAYDET BUTONU
-    # ========================================================
-
-    if st.button(
-
-        "💾 HAREKETİ KAYDET",
-
-        type="primary",
-
-        use_container_width=True
-
-    ):
-
-
-        if (
-            selected_status != "Boş"
-            and not selected_product.strip()
-        ):
-
-
-            st.error(
-                "Dolu lokasyonlarda ürün bilgisi girmen gerekiyor."
-            )
-
-
-        elif (
-            selected_status != "Boş"
-            and selected_quantity <= 0
-        ):
-
-
-            st.error(
-                "Dolu lokasyonlarda miktar 0'dan büyük olmalıdır."
-            )
-
 
         else:
 
+            quantity_per_location = 0
 
-            save_location(
 
-                code=(
-                    selected_location.code
-                ),
+        # ====================================================
+        # ÖN İZLEME
+        # ====================================================
 
-                status=(
-                    selected_status
-                ),
+        st.markdown(
+            "### 📋 Dağılım Ön İzleme"
+        )
 
-                product=(
-                    selected_product
-                ),
 
-                lot=(
-                    selected_lot
-                ),
+        p1, p2, p3 = st.columns(
+            3
+        )
 
-                quantity=(
-                    selected_quantity
-                ),
 
-                movement_type=(
-                    selected_movement_type
-                ),
+        p1.metric(
+            "Seçilen Lokasyon",
+            location_count
+        )
 
-                note=(
-                    movement_note
-                ),
 
-                changed_by=(
-                    changed_by
+        p2.metric(
+            "Toplam Miktar",
+            f"{total_quantity:,.2f} kg"
+        )
+
+
+        p3.metric(
+            "Lokasyon Başına",
+            f"{quantity_per_location:,.2f} kg"
+        )
+
+
+        preview_data = []
+
+
+        for code in selected_codes:
+
+            preview_data.append({
+
+                "Lokasyon":
+                    code,
+
+                "Durum":
+                    selected_status,
+
+                "Ürün":
+                    selected_product,
+
+                "Lot":
+                    selected_lot,
+
+                "Miktar (kg)":
+                    round(
+                        quantity_per_location,
+                        2
+                    )
+
+            })
+
+
+        preview_df = pd.DataFrame(
+            preview_data
+        )
+
+
+        st.dataframe(
+
+            preview_df,
+
+            use_container_width=True,
+
+            hide_index=True
+
+        )
+
+
+        # ====================================================
+        # KAYDET
+        # ====================================================
+
+        if st.button(
+
+            "💾 TOPLU HAREKETİ KAYDET",
+
+            type="primary",
+
+            use_container_width=True
+
+        ):
+
+
+            if (
+                selected_status != "Boş"
+                and not selected_product.strip()
+            ):
+
+                st.error(
+                    "Ürün bilgisini gir."
                 )
 
-            )
+
+            elif (
+                selected_status != "Boş"
+                and not selected_lot.strip()
+            ):
+
+                st.error(
+                    "Lot bilgisini gir."
+                )
 
 
-            st.success(
+            elif (
+                selected_status != "Boş"
+                and total_quantity <= 0
+            ):
 
-                f"{selected_location.code} "
-                f"lokasyonunda "
-                f"{selected_movement_type} "
-                f"hareketi kaydedildi."
-
-            )
+                st.error(
+                    "Toplam miktar 0'dan büyük olmalıdır."
+                )
 
 
-            st.rerun()
+            else:
+
+
+                save_multiple_locations(
+
+                    location_codes=(
+                        selected_codes
+                    ),
+
+                    status=(
+                        selected_status
+                    ),
+
+                    product=(
+                        selected_product
+                    ),
+
+                    lot=(
+                        selected_lot
+                    ),
+
+                    total_quantity=(
+                        total_quantity
+                    ),
+
+                    movement_type=(
+                        selected_movement_type
+                    ),
+
+                    note=(
+                        movement_note
+                    ),
+
+                    changed_by=(
+                        changed_by
+                    )
+
+                )
+
+
+                st.session_state.selected_locations = []
+
+
+                st.success(
+                    f"{location_count} lokasyona "
+                    f"toplam {total_quantity:,.2f} kg "
+                    f"başarıyla dağıtıldı."
+                )
+
+
+                st.rerun()
 
 
 # ============================================================
@@ -1083,144 +1224,100 @@ with tab_report:
 
     with filter1:
 
+        start_date = st.date_input(
 
-        start_date = (
-            st.date_input(
+            "Başlangıç Tarihi",
 
-                "Başlangıç Tarihi",
-
-                value=(
-                    datetime.now().date()
-                    - timedelta(days=30)
-                )
-
+            value=(
+                datetime.now().date()
+                - timedelta(days=30)
             )
+
         )
 
 
     with filter2:
 
+        end_date = st.date_input(
 
-        end_date = (
-            st.date_input(
+            "Bitiş Tarihi",
 
-                "Bitiş Tarihi",
+            value=datetime.now().date()
 
-                value=(
-                    datetime.now().date()
-                )
-
-            )
         )
 
 
     with filter3:
 
+        location_filter = st.text_input(
 
-        location_filter = (
-            st.text_input(
+            "Lokasyon",
 
-                "Lokasyon",
+            placeholder="Örn: J-04"
 
-                placeholder=(
-                    "Örn: A-01"
-                )
-
-            )
         )
 
 
     with filter4:
 
+        movement_filter = st.selectbox(
 
-        movement_filter = (
-            st.selectbox(
+            "Hareket Tipi",
 
-                "Hareket Tipi",
+            [
+                "Tümü"
+            ]
+            + MOVEMENT_TYPES
 
-                [
-                    "Tümü"
-                ]
-                + MOVEMENT_TYPES
-
-            )
         )
 
 
-    filter5, filter6 = (
-        st.columns(
-            2
-        )
+    filter5, filter6 = st.columns(
+        2
     )
 
 
     with filter5:
 
+        product_filter = st.text_input(
 
-        product_filter = (
-            st.text_input(
+            "Ürün Filtresi",
 
-                "Ürün Filtresi",
+            placeholder="Örn: GS840"
 
-                placeholder=(
-                    "Örn: GS840"
-                )
-
-            )
         )
 
 
     with filter6:
 
+        lot_filter = st.text_input(
 
-        lot_filter = (
-            st.text_input(
+            "Lot Filtresi",
 
-                "Lot Filtresi",
+            placeholder="Örn: 2608B021"
 
-                placeholder=(
-                    "Örn: 2608B021"
-                )
-
-            )
         )
 
-
-    # ========================================================
-    # RAPORU GETİR
-    # ========================================================
 
     report = movement_report(
 
-        start_date=(
-            start_date
-        ),
+        start_date=start_date,
 
-        end_date=(
-            end_date
-        ),
+        end_date=end_date,
 
-        location=(
-            location_filter
-        ),
+        location=location_filter,
 
-        product=(
-            product_filter
-        ),
+        product=product_filter,
 
-        lot=(
-            lot_filter
-        ),
+        lot=lot_filter,
 
-        movement_type=(
-            movement_filter
-        )
+        movement_type=movement_filter
 
     )
 
 
     # ========================================================
-    # RAPOR SONUCU
+    # RAPOR
     # ========================================================
 
     if report.empty:
@@ -1234,30 +1331,22 @@ with tab_report:
     else:
 
 
-        total_positive = (
-            report.loc[
+        total_positive = report.loc[
 
-                report[
-                    "Fark (kg)"
-                ] > 0,
+            report["Fark (kg)"] > 0,
 
-                "Fark (kg)"
+            "Fark (kg)"
 
-            ].sum()
-        )
+        ].sum()
 
 
-        total_negative = (
-            -report.loc[
+        total_negative = -report.loc[
 
-                report[
-                    "Fark (kg)"
-                ] < 0,
+            report["Fark (kg)"] < 0,
 
-                "Fark (kg)"
+            "Fark (kg)"
 
-            ].sum()
-        )
+        ].sum()
 
 
         report_kpi1, report_kpi2, report_kpi3 = (
@@ -1271,9 +1360,7 @@ with tab_report:
 
             "Toplam Hareket",
 
-            len(
-                report
-            )
+            len(report)
 
         )
 
@@ -1307,17 +1394,10 @@ with tab_report:
         )
 
 
-        # ====================================================
-        # CSV RAPOR
-        # ====================================================
-
-        csv_data = (
-            report.to_csv(
-                index=False
-            )
-            .encode(
-                "utf-8-sig"
-            )
+        csv_data = report.to_csv(
+            index=False
+        ).encode(
+            "utf-8-sig"
         )
 
 
@@ -1325,9 +1405,7 @@ with tab_report:
 
             "⬇ CSV Hareket Raporunu İndir",
 
-            data=(
-                csv_data
-            ),
+            data=csv_data,
 
             file_name=(
 
